@@ -1,4 +1,4 @@
-import { MongoClient, Db, Collection } from 'mongodb';
+import { MongoClient, Db, Collection, ServerApiVersion } from 'mongodb';
 import { GameState, ChatMessage } from '../types/game.js';
 
 let client: MongoClient | null = null;
@@ -13,19 +13,19 @@ export async function connectToDatabase(): Promise<Db> {
   }
 
   client = new MongoClient(uri, {
-    ssl: true,
-    tls: true,
-    tlsInsecure: false,
-    directConnection: false,
-    retryWrites: true,
-    w: 'majority',
-    serverSelectionTimeoutMS: 30000,
-    connectTimeoutMS: 30000
+    serverApi: {
+      version: ServerApiVersion.v1,
+      strict: true,
+      deprecationErrors: true
+    }
   });
   await client.connect();
+  
+  // Verify connection
+  await client.db('admin').command({ ping: 1 });
+  console.log('Connected to MongoDB successfully!');
+  
   db = client.db('monopoly-deal');
-
-  console.log('Connected to MongoDB');
   return db;
 }
 
