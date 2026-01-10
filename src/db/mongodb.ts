@@ -12,7 +12,13 @@ export async function connectToDatabase(): Promise<Db> {
     throw new Error('MONGODB_URI environment variable is not set');
   }
 
-  client = new MongoClient(uri);
+  client = new MongoClient(uri, {
+    tls: true,
+    tlsAllowInvalidCertificates: false,
+    tlsAllowInvalidHostnames: false,
+    retryWrites: true,
+    w: 'majority'
+  });
   await client.connect();
   db = client.db('monopoly-deal');
   
