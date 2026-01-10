@@ -21,7 +21,7 @@ export async function connectToDatabase(): Promise<Db> {
   });
   await client.connect();
   db = client.db('monopoly-deal');
-  
+
   console.log('Connected to MongoDB');
   return db;
 }
