@@ -17,14 +17,17 @@ export async function connectToDatabase(): Promise<Db> {
       version: ServerApiVersion.v1,
       strict: true,
       deprecationErrors: true
-    }
+    },
+    tls: true,
+    minPoolSize: 1,
+    maxPoolSize: 10
   });
   await client.connect();
-  
+
   // Verify connection
   await client.db('admin').command({ ping: 1 });
   console.log('Connected to MongoDB successfully!');
-  
+
   db = client.db('monopoly-deal');
   return db;
 }
