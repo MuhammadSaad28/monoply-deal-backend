@@ -13,11 +13,14 @@ export async function connectToDatabase(): Promise<Db> {
   }
 
   client = new MongoClient(uri, {
+    ssl: true,
     tls: true,
-    tlsAllowInvalidCertificates: false,
-    tlsAllowInvalidHostnames: false,
+    tlsInsecure: false,
+    directConnection: false,
     retryWrites: true,
-    w: 'majority'
+    w: 'majority',
+    serverSelectionTimeoutMS: 30000,
+    connectTimeoutMS: 30000
   });
   await client.connect();
   db = client.db('monopoly-deal');
