@@ -80,8 +80,12 @@ export interface PendingAction {
   card?: Card;
   targetProperty?: PropertyCard;
   targetSet?: PropertyColor;
+  targetCardId?: string; // Specific card to steal (for sly deal)
+  giveCardId?: string; // Card to give in exchange (for forced deal)
+  giveFromSet?: PropertyColor; // Set to give from (for forced deal)
   canSayNo: boolean;
   respondedPlayers?: string[]; // Track who has responded for multi-player actions (birthday, rent all)
+  isDoubleRent?: boolean; // Whether double rent is applied
 }
 
 export interface GameState {
@@ -139,12 +143,17 @@ export interface PlayCardTarget {
   playerId?: string;
   propertySetColor?: PropertyColor;
   asBank?: boolean;
+  targetCardId?: string; // Specific card to steal
+  giveCardId?: string; // Card to give in exchange (forced deal)
+  giveFromSet?: PropertyColor; // Set to give from (forced deal)
+  useDoubleRent?: boolean; // Whether to use double rent
 }
 
 export interface ActionResponse {
   accept: boolean;
   useJustSayNo?: boolean;
   paymentCardIds?: string[];
+  selectedCardId?: string; // Card selected by target player (for sly deal - they choose which to give)
 }
 
 // Room

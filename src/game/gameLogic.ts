@@ -234,8 +234,9 @@ function playActionCard(
 
     case 'slyDeal':
       if (!target?.playerId || !target?.propertySetColor) {
-        throw new Error('Must select a player and property');
+        throw new Error('Must select a player and property set');
       }
+      // Target player will choose which card to give
       state.pendingAction = {
         type: 'slyDeal',
         fromPlayerId: player.id,
@@ -248,14 +249,17 @@ function playActionCard(
       break;
 
     case 'forcedDeal':
-      if (!target?.playerId || !target?.propertySetColor) {
-        throw new Error('Must select a player and property');
+      if (!target?.playerId || !target?.propertySetColor || !target?.giveCardId || !target?.giveFromSet) {
+        throw new Error('Must select a player, their property set, and your property to exchange');
       }
+      // Target player will choose which card from their set to give
       state.pendingAction = {
         type: 'forcedDeal',
         fromPlayerId: player.id,
         toPlayerId: target.playerId,
         targetSet: target.propertySetColor,
+        giveCardId: target.giveCardId,
+        giveFromSet: target.giveFromSet,
         card,
         canSayNo: true
       };
@@ -321,13 +325,31 @@ function playRentCard(
   card: RentCard, 
   target?: PlayCardTarget
 ): void {
-  // Find a matching property set
-  const matchingSet = player.properties.find(s => card.colors.includes(s.color));
+  // Find a matching property set - use specified color if provided
+  const targetColor = target?.propertySetColor;
+  const matchingSet = targetColor 
+    ? player.properties.find(s => s.color === targetColor && card.colors.includes(s.color))
+    : player.properties.find(s => card.colors.includes(s.color));
+  
   if (!matchingSet) {
     throw new Error('You need a matching property to charge rent');
   }
 
-  const rentAmount = calculateRent(matchingSet);
+  let rentAmount = calculateRent(matchingSet);
+  
+  // Apply double rent if specified
+  if (target?.useDoubleRent) {
+    const doubleRentIndex = player.hand.findIndex(
+      c => c.type === 'action' && (c as ActionCard).action === 'doubleRent'
+    );
+    if (doubleRentIndex !== -1) {
+      const doubleRentCard = player.hand.splice(doubleRentIndex, 1)[0];
+      state.discardPile.push(doubleRentCard);
+      rentAmount *= 2;
+      // Double rent uses an extra action
+      state.actionsRemaining--;
+    }
+  }
 
   if (card.isWildRent) {
     // Wild rent targets one player
@@ -338,7 +360,8 @@ function playRentCard(
       toPlayerId: target.playerId,
       amount: rentAmount,
       card,
-      canSayNo: true
+      canSayNo: true,
+      isDoubleRent: target?.useDoubleRent
     };
   } else {
     // Regular rent targets all players
@@ -348,7 +371,8 @@ function playRentCard(
       amount: rentAmount,
       card,
       canSayNo: true,
-      respondedPlayers: [] // Track who has responded for multi-player rent
+      respondedPlayers: [], // Track who has responded for multi-player rent
+      isDoubleRent: target?.useDoubleRent
     };
   }
   
@@ -428,22 +452,29 @@ export function respondToAction(
     }
     
     // For single-target actions, check if initiator wants to counter
+    // Store original action details before potentially modifying
+    const originalFromPlayerId = state.pendingAction.fromPlayerId;
+    const originalToPlayerId = state.pendingAction.toPlayerId;
+    
     const initiatorJustSayNo = fromPlayer.hand.find(
       c => c.type === 'action' && (c as ActionCard).action === 'justSayNo'
     );
     
     if (initiatorJustSayNo) {
-      // Swap pending action to allow counter
+      // Ask initiator if they want to counter - create a counter-action state
+      // The pending action stays the same but we track that it's in counter mode
       state.pendingAction = {
         ...state.pendingAction,
-        fromPlayerId: playerId,
-        toPlayerId: state.pendingAction.fromPlayerId,
+        // Swap who needs to respond - initiator now needs to decide to counter or not
+        fromPlayerId: playerId, // The person who just played Just Say No
+        toPlayerId: originalFromPlayerId, // The original initiator who can counter
         canSayNo: true
       };
+      state.updatedAt = new Date();
       return;
     }
     
-    // Action cancelled
+    // Action cancelled - no counter available
     state.pendingAction = null;
     
     const currentPlayer = state.players[state.currentPlayerIndex];
@@ -461,15 +492,32 @@ export function respondToAction(
   }
 
   // Handle payment
-  if (response.accept && response.paymentCardIds && state.pendingAction.amount) {
-    const totalValue = response.paymentCardIds.reduce((sum, cardId) => {
+  if (response.accept && state.pendingAction.amount) {
+    const requiredAmount = state.pendingAction.amount;
+    
+    // Calculate total assets the player has
+    const totalBankValue = player.bank.reduce((sum, c) => sum + c.value, 0);
+    const totalPropertyValue = player.properties.flatMap(s => s.cards).reduce((sum, c) => sum + c.value, 0);
+    const totalAssets = totalBankValue + totalPropertyValue;
+    
+    // Calculate what they're trying to pay
+    const paymentCardIds = response.paymentCardIds || [];
+    const paymentValue = paymentCardIds.reduce((sum, cardId) => {
       const bankCard = player.bank.find(c => c.id === cardId);
       const propCard = player.properties.flatMap(s => s.cards).find(c => c.id === cardId);
       return sum + (bankCard?.value || propCard?.value || 0);
     }, 0);
+    
+    // Validate payment - must pay at least the required amount OR all assets if they have less
+    if (totalAssets > 0) {
+      const minimumPayment = Math.min(requiredAmount, totalAssets);
+      if (paymentValue < minimumPayment) {
+        throw new Error(`You must pay at least $${minimumPayment}M (you selected $${paymentValue}M)`);
+      }
+    }
 
-    // Remove cards from player
-    for (const cardId of response.paymentCardIds) {
+    // Remove cards from player and give to initiator
+    for (const cardId of paymentCardIds) {
       const bankIndex = player.bank.findIndex(c => c.id === cardId);
       if (bankIndex !== -1) {
         const card = player.bank.splice(bankIndex, 1)[0];
@@ -500,10 +548,12 @@ export function respondToAction(
   if (response.accept && !isMultiPlayerAction) {
     switch (state.pendingAction.type) {
       case 'slyDeal':
-        executeSlyDeal(state, fromPlayer, player, state.pendingAction.targetSet!);
+        // Target player chose which card to give via response.selectedCardId
+        executeSlyDeal(state, fromPlayer, player, state.pendingAction.targetSet!, response.selectedCardId);
         break;
       case 'forcedDeal':
-        executeForcedDeal(state, fromPlayer, player, state.pendingAction.targetSet!);
+        // Target player chose which card to give via response.selectedCardId
+        executeForcedDeal(state, fromPlayer, player, state.pendingAction.targetSet!, response.selectedCardId, state.pendingAction.giveCardId, state.pendingAction.giveFromSet);
         break;
       case 'dealBreaker':
         executeDealBreaker(state, fromPlayer, player, state.pendingAction.targetSet!);
@@ -546,12 +596,20 @@ function executeSlyDeal(
   state: GameState, 
   fromPlayer: Player, 
   toPlayer: Player, 
-  targetColor: PropertyColor
+  targetColor: PropertyColor,
+  targetCardId?: string
 ): void {
   const targetSet = toPlayer.properties.find(s => s.color === targetColor);
   if (!targetSet || targetSet.isComplete) return;
 
-  const card = targetSet.cards.pop();
+  // Find the specific card if ID provided, otherwise take the last one
+  let cardIndex = targetSet.cards.length - 1;
+  if (targetCardId) {
+    const idx = targetSet.cards.findIndex(c => c.id === targetCardId);
+    if (idx !== -1) cardIndex = idx;
+  }
+
+  const card = targetSet.cards.splice(cardIndex, 1)[0];
   if (card && card.type === 'property') {
     playPropertyCard(state, fromPlayer, card as PropertyCard, targetColor);
   }
@@ -563,11 +621,45 @@ function executeForcedDeal(
   state: GameState, 
   fromPlayer: Player, 
   toPlayer: Player, 
-  targetColor: PropertyColor
+  targetColor: PropertyColor,
+  targetCardId?: string,
+  giveCardId?: string,
+  giveFromSet?: PropertyColor
 ): void {
-  // Similar to sly deal but requires giving a property back
-  // Simplified: just steal one property
-  executeSlyDeal(state, fromPlayer, toPlayer, targetColor);
+  // Get the card from target player
+  const targetSet = toPlayer.properties.find(s => s.color === targetColor);
+  if (!targetSet || targetSet.isComplete) return;
+
+  let targetCardIndex = targetSet.cards.length - 1;
+  if (targetCardId) {
+    const idx = targetSet.cards.findIndex(c => c.id === targetCardId);
+    if (idx !== -1) targetCardIndex = idx;
+  }
+
+  const takenCard = targetSet.cards.splice(targetCardIndex, 1)[0];
+  
+  // Give a card from initiator to target
+  if (giveCardId && giveFromSet) {
+    const giveSet = fromPlayer.properties.find(s => s.color === giveFromSet);
+    if (giveSet && !giveSet.isComplete) {
+      const giveCardIndex = giveSet.cards.findIndex(c => c.id === giveCardId);
+      if (giveCardIndex !== -1) {
+        const givenCard = giveSet.cards.splice(giveCardIndex, 1)[0];
+        if (givenCard && givenCard.type === 'property') {
+          playPropertyCard(state, toPlayer, givenCard as PropertyCard, giveFromSet);
+        }
+        updatePropertySetCompletion(giveSet);
+        fromPlayer.properties = fromPlayer.properties.filter(s => s.cards.length > 0);
+      }
+    }
+  }
+
+  // Add taken card to initiator
+  if (takenCard && takenCard.type === 'property') {
+    playPropertyCard(state, fromPlayer, takenCard as PropertyCard, targetColor);
+  }
+  updatePropertySetCompletion(targetSet);
+  toPlayer.properties = toPlayer.properties.filter(s => s.cards.length > 0);
 }
 
 function executeDealBreaker(
@@ -706,6 +798,9 @@ export function rearrangeProperty(
 
   // Clean up empty sets
   player.properties = player.properties.filter(s => s.cards.length > 0);
+
+  // Check for winner after rearranging
+  checkWinner(state);
 
   state.updatedAt = new Date();
 }

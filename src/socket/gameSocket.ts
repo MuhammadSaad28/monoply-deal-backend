@@ -43,8 +43,8 @@ const COLOR_NAMES: Record<PropertyColor, string> = {
   yellow: 'Yellow',
   green: 'Green',
   darkBlue: 'Dark Blue',
-  railroad: 'Railroad',
-  utility: 'Utility'
+  railroad: 'Black',
+  utility: 'Light Green'
 };
 
 // In-memory room storage for active games
@@ -477,6 +477,15 @@ export function setupSocketHandlers(
         await saveGameState(room.gameState);
 
         await sendGameLog(io, room, `🔄 ${player.name} moved a wildcard from ${COLOR_NAMES[fromColor]} to ${COLOR_NAMES[toColor]}`);
+
+        // Check for winner after rearranging
+        if (room.gameState.winner) {
+          const winner = room.gameState.players.find(p => p.id === room.gameState.winner);
+          if (winner) {
+            await sendGameLog(io, room, `🏆 ${winner.name} WINS THE GAME! 🎉`);
+            io.to(roomCode).emit('gameOver', winner.id, winner.name);
+          }
+        }
 
         room.gameState.players.forEach(p => {
           if (p.socketId) {
