@@ -1,4 +1,4 @@
-import { MongoClient, Db, Collection } from 'mongodb';
+import { MongoClient, Db, Collection, ServerApiVersion } from 'mongodb';
 import { GameState, ChatMessage } from '../types/game.js';
 
 let client: MongoClient | null = null;
@@ -12,11 +12,23 @@ export async function connectToDatabase(): Promise<Db> {
     throw new Error('MONGODB_URI environment variable is not set');
   }
 
-  client = new MongoClient(uri);
+  client = new MongoClient(uri, {
+    serverApi: {
+      version: ServerApiVersion.v1,
+      strict: true,
+      deprecationErrors: true
+    },
+    tls: true,
+    minPoolSize: 1,
+    maxPoolSize: 10
+  });
   await client.connect();
+
+  // Verify connection
+  await client.db('admin').command({ ping: 1 });
+  console.log('Connected to MongoDB successfully!');
+
   db = client.db('monopoly-deal');
-  
-  console.log('Connected to MongoDB');
   return db;
 }
 

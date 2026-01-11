@@ -13,17 +13,20 @@ const app = express();
 const httpServer = createServer(app);
 
 const corsOrigin = process.env.CORS_ORIGIN || 'http://localhost:5173';
+const corsOrigins = corsOrigin.split(',').map(o => o.trim());
 
 const io = new Server<ClientToServerEvents, ServerToClientEvents>(httpServer, {
   cors: {
-    origin: corsOrigin,
+    origin: corsOrigins.length === 1 ? corsOrigins[0] : corsOrigins,
     methods: ['GET', 'POST'],
     credentials: true
-  }
+  },
+  pingTimeout: 60000,
+  pingInterval: 25000
 });
 
 app.use(cors({
-  origin: corsOrigin,
+  origin: corsOrigins.length === 1 ? corsOrigins[0] : corsOrigins,
   credentials: true
 }));
 
@@ -53,10 +56,11 @@ async function startServer() {
     setupSocketHandlers(io);
 
     const PORT = process.env.PORT || 3001;
-    httpServer.listen(PORT, () => {
+    const HOST = '0.0.0.0';
+    httpServer.listen(Number(PORT), HOST, () => {
       console.log(`🎮 Monopoly Deal server running on port ${PORT}`);
       console.log(`📡 WebSocket ready for connections`);
-      console.log(`🔗 CORS origin: ${corsOrigin}`);
+      console.log(`🔗 CORS origins: ${corsOrigins.join(', ')}`);
     });
   } catch (error) {
     console.error('Failed to start server:', error);
